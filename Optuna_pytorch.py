@@ -1,11 +1,6 @@
 """
 Optuna example that optimizes multi-layer perceptrons using PyTorch.
 
-In this example, we optimize the validation accuracy of fashion product recognition using
-PyTorch and FashionMNIST. We optimize the neural network architecture as well as the optimizer
-configuration. As it is too time consuming to use the whole FashionMNIST dataset,
-we here use a small subset of it.
-
 """
 
 import os
@@ -24,12 +19,11 @@ import numpy as np
 
 
 DEVICE = torch.device("cuda:0")
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 CLASSES = 1
 DIR = os.getcwd()
 EPOCHS = 1000
-# N_TRAIN_EXAMPLES = BATCH_SIZE * 30
-# N_VALID_EXAMPLES = BATCH_SIZE * 10
+
 
 
 def define_model(trial):
@@ -50,66 +44,58 @@ def define_model(trial):
     # layers.append(nn.LogSoftmax(dim=1))
 
     return nn.Sequential(*layers)
-def get_dataset():
+
+def get_dataset(datapath):
     # Load .json Files
-    DATA = pd.read_csv('normalized_onlyPO.csv')
-
-    f = DATA.loc[:, 'f'].values
-    Cr = DATA.loc[:, 'Cr'].values
-    Ln = DATA.loc[:, 'Ln'].values
-    Q = DATA.loc[:, 'Q'].values
-    M = DATA.loc[:, 'M'].values
-    # Cr = DATA.loc[:,'Cr'].values
-    # Lm = DATA.loc[:,'Lm'].values
-    # fr = DATA.loc[:,'fr'].values
-    # R = DATA.loc[:,'R'].values
-    # Vo = DATA.loc[:,'Vo'].values
-
+    # DATA = pd.read_csv(os.path.join(inputfolder,'normalized_Small.csv'))
+    DATA = pd.read_csv(datapath)
+    fn= DATA.loc[:,'fn'].values
+    Ln = DATA.loc[:,'Ln'].values
+    Q = DATA.loc[:,'Q'].values
+    Vout_unit=DATA.loc[:,'Vout_unit'].values
+    V_FHA = DATA.loc[:,'V_FHA'].values
+    
     # Compute labels
-    f = f.reshape((-1, 1))
-    Cr = Cr.reshape((-1, 1))
-    Ln = Ln.reshape((-1, 1))
-    Q = Q.reshape((-1, 1))
-    M = M.reshape((-1, 1))
-    # Cr = Cr.reshape((-1,1))
-    # Lm = Lm.reshape((-1,1))
-    # # fr = fr.reshape((-1,1))
-    # R = R.reshape((-1,1))
-    # Vo = Vo.reshape((-1,1))
+    fn = fn.reshape((-1,1))
+    Ln = Ln.reshape((-1,1))
+    Q=Q.reshape((-1,1))
+    Vout_unit=Vout_unit.reshape((-1,1))
+    V_FHA = V_FHA.reshape((-1,1))
 
-    temp_input = np.concatenate((f, Cr, Ln, Q), axis=1)
-    temp_output = np.concatenate(M)
-
+    temp_input = np.concatenate((fn,Ln,Q,V_FHA),axis=1)
+    temp_output = np.concatenate(Vout_unit)
+    
     in_tensors = torch.from_numpy(temp_input).view(-1, 4)
     out_tensors = torch.from_numpy(temp_output).view(-1, 1)
 
-    # # Save dataset for future use
-    np.save("dataset.fc.in.npy", in_tensors.numpy())
-    np.save("dataset.fc.out.npy", out_tensors.numpy())
+
+    # # # Save dataset for future use
+    # np.save(os.path.join(outputfolder,"dataset.fc.in.npy"), in_tensors.numpy())
+    # np.save(os.path.join(outputfolder,"dataset.fc.out.npy"), out_tensors.numpy())
 
     return torch.utils.data.TensorDataset(in_tensors, out_tensors)
 
-
 def get_dataloader():
+
+    inputfolder = 'OutputData'
+    outputfolder = 'OutputANN'
+    trainval_data_path = os.path.join(inputfolder,"normalized_big.csv")
+    test_data_path = os.path.join(inputfolder,"normalized_test_big.csv")
     # Load dataset
-    dataset = get_dataset()
-
+    trainval_dataset = get_dataset(trainval_data_path)
+    test_dataset = get_dataset(test_data_path)
     # Split the dataset
-    train_size = int(0.8 * len(dataset))
-    valid_size = int(0.1 * len(dataset))
-
-    # train_size = N_TRAIN_EXAMPLES
-    # valid_size = N_VALID_EXAMPLES
-
-
-    test_size = len(dataset) - train_size - valid_size
-    train_dataset, valid_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_size, valid_size, test_size])
+    train_size = int(0.8 * len(trainval_dataset))
+    valid_size = len(trainval_dataset) - train_size
+    # test_size = test_dataset
+    train_dataset, valid_dataset= torch.utils.data.random_split(trainval_dataset, [train_size, valid_size])
     kwargs = {'num_workers': 0, 'pin_memory': True}
     # kwargs = {'num_workers': 0, 'pin_memory': True, 'pin_memory_device': "cuda:0"}
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, **kwargs)
-    valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False, **kwargs)
+    valid_loader = torch.utils.data.DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=True, **kwargs)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, **kwargs)
-
+    
+    
     return train_loader, valid_loader, train_size, valid_size
 
 
