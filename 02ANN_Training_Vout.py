@@ -21,13 +21,11 @@ class Net(nn.Module):
         super(Net, self).__init__()
         # Define a fully connected layers model with three inputs (frequency, flux density, duty ratio) and one output (power loss).
         self.layers = nn.Sequential(
-            nn.Linear(4, 32),
+            nn.Linear(4, 122),
             nn.ReLU(),
-            nn.Linear(32, 64),
+            nn.Linear(122, 38),
             nn.ReLU(),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, 1),
+            nn.Linear(38, 1),
         )
 
     def forward(self, x):
@@ -111,7 +109,7 @@ def main():
     BATCH_SIZE = 64
     DECAY_EPOCH = 100
     DECAY_RATIO = 0.5
-    LR_INI = 0.02
+    LR_INI = 0.004779934844012262
 
 
     # Select GPU as default device
@@ -390,48 +388,77 @@ def main():
         plt.savefig(os.path.join(outputfolder,f'output_{i}_mape_histogram.png')) 
         plt.close()  # Close the plot to prevent display in a loop
 
-    # # Evaluation
-    # net.eval()
-    # y_meas = []
-    # y_pred = []
-    # with torch.no_grad():
-    #     for inputs, labels in test_loader:
-    #         y_pred.append(net(inputs.to(device)))
-    #         y_meas.append(labels.to(device))
-    #
-    # y_meas = torch.cat(y_meas, dim=0)
-    # y_pred = torch.cat(y_pred, dim=0)
-    # print(f"Test Loss: {F.mse_loss(y_meas, y_pred).item():.10f}")
-    #
-    # # Convert tensors to numpy arrays for compatibility with pandas
-    # y_meas = y_meas.cpu().numpy()
-    # y_pred = y_pred.cpu().numpy()
-    #
-    #
-    #
-    # # yy_pred = 10**(y_pred)
-    # # yy_meas = 10**(y_meas)
-    # # Create a DataFrame with the measurements and predictions
-    # df = pd.DataFrame({
-    #     'y_meas': y_meas.flatten(),  # Ensure arrays are flattened
-    #     'y_pred': y_pred.flatten()
-    # })
-    #
-    # # Save the DataFrame to a CSV file
-    # csv_file_path = 'y_meas_y_pred.csv'
-    # df.to_csv(csv_file_path, index=False)
-    #
-    # print(f"Saved measurements and predictions to '{csv_file_path}'")
-    #
-    # # Relative Error
-    # Error_re = abs(yy_pred-yy_meas)/abs(yy_meas)*100
-    # Error_re_avg = np.mean(Error_re)
-    # Error_re_rms = np.sqrt(np.mean(Error_re ** 2))
-    # Error_re_max = np.max(Error_re)
-    # print(f"Relative Error: {Error_re_avg:.8f}")
-    # print(f"RMS Error: {Error_re_rms:.8f}")
-    # print(f"MAX Error: {Error_re_max:.8f}")
+    
 
+net.eval()
+inputs_list = []
+y_meas = []
+y_pred = []
+
+with torch.no_grad():
+    for inputs, labels in test_loader:
+        outputs = net(inputs.to(device))
+        outputs = outputs+inputs[:,3].view(-1,1).to(device)
+        y_pred.append(outputs)
+        y_meas.append(labels.to(device))
+        inputs_list.append(inputs.to(device))
+
+# Concatenate all batches
+inputs_array = torch.cat(inputs_list, dim=0)
+y_meas = torch.cat(y_meas, dim=0)
+y_pred = torch.cat(y_pred, dim=0)
+
+# Calculate overall metrics
+mse_value = F.mse_loss(y_meas, y_pred).item()
+rmse_value = np.sqrt(mse_value)
+mae_value = F.l1_loss(y_meas, y_pred).item()
+print(f"Test MSE: {mse_value:.10f}")
+print(f"Test RMSE: {rmse_value:.10f}")
+print(f"Test MAE: {mae_value:.10f}")
+
+# Convert tensors to numpy arrays for further processing
+inputs_array = inputs_array.cpu().numpy()
+y_meas = y_meas.cpu().numpy()
+y_pred = y_pred.cpu().numpy()
+
+# Load normalization boundaries
+boundaries = pd.read_csv(os.path.join(inputfolder,"boundary_big.csv"))
+min_vals_input = boundaries.loc[boundaries['Column'].isin(['fn','Ln', 'Q','V_FHA']), 'min'].tolist()
+max_vals_input = boundaries.loc[boundaries['Column'].isin(['fn','Ln', 'Q','V_FHA']), 'max'].tolist()
+min_vals_output = boundaries.loc[boundaries['Column'].isin(['Vout_unit']), 'min'].tolist()
+max_vals_output = boundaries.loc[boundaries['Column'].isin(['Vout_unit']), 'max'].tolist()
+
+
+# Function to reverse normalize data
+def reverse_normalize(data, min_val, max_val):
+    return data * (max_val - min_val) + min_val
+
+# Reverse normalization for inputs and outputs
+for i in range(inputs_array.shape[1]):
+    inputs_array[:, i] = reverse_normalize(inputs_array[:, i], min_vals_input[i], max_vals_input[i])
+    if i==3:
+        inputs_array[:, i] = 10**inputs_array[:, i]
+
+for i in range(y_meas.shape[1]):
+    y_meas[:, i] = reverse_normalize(y_meas[:, i], min_vals_output[-1], max_vals_output[-1])
+    y_pred[:, i] = reverse_normalize(y_pred[:, i], min_vals_output[-1], max_vals_output[-1])
+    y_meas[:, i] = 10**y_meas[:, i]
+    y_pred[:, i] = 10**y_pred[:, i]
+# DataFrame to save
+df = pd.DataFrame(inputs_array, columns=[f'input_{i}' for i in range(inputs_array.shape[1])])
+output_data = {'y_meas_0': y_meas[:, 0], 'y_pred_0': y_pred[:, 0]}
+                # 'y_meas_1': y_meas[:, 1], 'y_pred_1': y_pred[:, 1],
+                # 'y_meas_2': y_meas[:, 2], 'y_pred_2': y_pred[:, 2]}
+df = pd.concat([df, pd.DataFrame(output_data)], axis=1)
+
+# Print mean of each metric for all outputs
+for metric, values in metrics.items():
+    print(f"Mean {metric}: {np.mean(values):.10f}")
+
+# Save the DataFrame to a CSV file
+csv_file_path = os.path.join(outputfolder,'full_data_y_meas_y_pred_big.csv')
+df.to_csv(csv_file_path, index=False)
+print(f"Saved full data with measurements and predictions to '{csv_file_path}'")
 
 
 if __name__ == "__main__":
